@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Domain-Specific Text Generator</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header>
+        <p class="eyebrow">Fine-Tuned Transformers Demo</p>
+        <h1>Domain-Specific Text Generator</h1>
+        <p class="subtitle">
+          Generate domain-aware text with a fine-tuned GPT-2 model. If a fine-tuned model is
+          unavailable, the app automatically falls back to base GPT-2.
+        </p>
+      </header>
+
+      <section class="card" aria-label="Generator form">
+        <label for="prompt">Prompt</label>
+        <textarea id="prompt" rows="6" placeholder="Type your domain-specific prompt here..."></textarea>
+
+        <div class="form-row">
+          <label for="maxLength">Max Length</label>
+          <input id="maxLength" type="number" value="100" min="20" max="512" />
+        </div>
+
+        <button id="generateBtn">Generate</button>
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="card" aria-label="Generation output">
+        <h2>Generated Text</h2>
+        <pre id="output">Your generated text will appear here.</pre>
+      </section>
+    </main>
+
+    <script src="/static/script.js" defer></script>
+  </body>
+</html>

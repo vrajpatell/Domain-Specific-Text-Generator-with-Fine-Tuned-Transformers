@@ -1,53 +1,139 @@
-# app/app.py
+"""FastAPI app for domain-specific text generation."""
 
-import gradio as gr
+from pathlib import Path
+from threading import Lock
+
 import torch
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 from transformers import GPT2LMHeadModel, GPT2TokenizerFast
 
-# Specify the path to the fine-tuned model
-MODEL_PATH = "fine_tuned_model"
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+MODEL_DIR = Path("fine_tuned_model")
+FALLBACK_MODEL = "gpt2"
+
+# Lazy-loaded model state so the web server can start quickly on deployment platforms.
+tokenizer: GPT2TokenizerFast | None = None
+model: GPT2LMHeadModel | None = None
+loaded_model_source: str | None = None
+load_error: str | None = None
+model_lock = Lock()
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Load the fine-tuned model and tokenizer
-tokenizer = GPT2TokenizerFast.from_pretrained(MODEL_PATH)
-model = GPT2LMHeadModel.from_pretrained(MODEL_PATH)
-model.to(device)
 
-def generate_text(prompt, max_length=100, num_return_sequences=1, temperature=0.7, top_k=50, top_p=0.95):
-    """
-    Generate text based on a prompt using the fine-tuned GPT-2 model.
-    """
-    inputs = tokenizer(prompt, return_tensors="pt")
-    inputs = inputs.to(device)
-    outputs = model.generate(
-        **inputs,
-        max_length=max_length,
-        num_return_sequences=num_return_sequences,
-        temperature=temperature,
-        top_k=top_k,
-        top_p=top_p,
-        do_sample=True,
-        pad_token_id=tokenizer.eos_token_id,
-    )
-    generated_texts = [
-        tokenizer.decode(output, skip_special_tokens=True) for output in outputs
-    ]
-    # Return a single string if only one sequence is generated
-    return generated_texts[0] if num_return_sequences == 1 else generated_texts
+app = FastAPI(title="Domain-Specific Text Generator API")
 
-# Build the Gradio interface
-iface = gr.Interface(
-    fn=generate_text,
-    inputs=[
-        gr.Textbox(lines=2, placeholder="Enter prompt here...", label="Prompt"),
-        gr.Slider(minimum=50, maximum=300, step=10, value=100, label="Max Length"),
-        gr.Slider(minimum=1, maximum=5, step=1, value=1, label="Number of Sequences"),
-        gr.Slider(minimum=0.1, maximum=1.0, step=0.1, value=0.7, label="Temperature"),
-    ],
-    outputs=gr.Textbox(label="Generated Text"),
-    title="Domain-Specific Text Generator",
-    description="Generate text using the fine-tuned GPT-2 model on your domain-specific data.",
+# Allows easier local development and deployment behind proxies.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-if __name__ == "__main__":
-    iface.launch()
+
+class GenerateRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, description="Prompt text used for generation")
+    max_length: int = Field(100, ge=20, le=512, description="Maximum output token length")
+
+
+class GenerateResponse(BaseModel):
+    prompt: str
+    generated_text: str
+    model_source: str
+
+
+def _load_model_and_tokenizer() -> None:
+    """Load the model once: fine-tuned model first, then base GPT-2 fallback."""
+    global tokenizer, model, loaded_model_source, load_error
+
+    if tokenizer is not None and model is not None:
+        return
+
+    with model_lock:
+        if tokenizer is not None and model is not None:
+            return
+
+        model_source = str(MODEL_DIR) if MODEL_DIR.exists() else FALLBACK_MODEL
+        try:
+            local_tokenizer = GPT2TokenizerFast.from_pretrained(model_source)
+            local_model = GPT2LMHeadModel.from_pretrained(model_source)
+
+            # GPT-2 has no pad token by default.
+            local_tokenizer.pad_token = local_tokenizer.eos_token
+            local_model.config.pad_token_id = local_tokenizer.eos_token_id
+
+            local_model.to(device)
+            local_model.eval()
+
+            tokenizer = local_tokenizer
+            model = local_model
+            loaded_model_source = model_source
+            load_error = None
+        except Exception as exc:  # Keep API alive and report cleanly.
+            load_error = str(exc)
+            tokenizer = None
+            model = None
+            loaded_model_source = None
+
+
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/")
+def root() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/index.html")
+def index_alias() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {
+        "status": "ok",
+        "model_source": loaded_model_source or "not_loaded",
+        "fallback_model": FALLBACK_MODEL,
+    }
+
+
+@app.post("/generate", response_model=GenerateResponse)
+def generate(payload: GenerateRequest) -> GenerateResponse:
+    prompt = payload.prompt.strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
+
+    _load_model_and_tokenizer()
+    if tokenizer is None or model is None:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Model is unavailable right now. Startup load failed: {load_error}",
+        )
+
+    inputs = tokenizer(prompt, return_tensors="pt")
+    inputs = {key: value.to(device) for key, value in inputs.items()}
+
+    with torch.no_grad():
+        output = model.generate(
+            **inputs,
+            max_length=payload.max_length,
+            do_sample=True,
+            temperature=0.8,
+            top_k=50,
+            top_p=0.95,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+
+    generated_text = tokenizer.decode(output[0], skip_special_tokens=True)
+    return GenerateResponse(
+        prompt=prompt,
+        generated_text=generated_text,
+        model_source=loaded_model_source or FALLBACK_MODEL,
+    )
