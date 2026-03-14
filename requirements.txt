@@ -1,5 +1,5 @@
-plaintext
+fastapi
+uvicorn[standard]
 transformers>=4.0.0
-datasets
 torch
-gradio
+datasets

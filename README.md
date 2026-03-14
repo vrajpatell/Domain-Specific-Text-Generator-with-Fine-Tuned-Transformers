@@ -1,118 +1,179 @@
-
 # Domain-Specific Text Generator with Fine-Tuned Transformers
 
-This project fine-tunes a pre-trained GPT-2 model on a domain-specific text dataset to generate text in a niche area. It demonstrates transfer learning, data preprocessing, model fine-tuning, and building an interactive demo using Gradio.
+A beginner-friendly project for fine-tuning GPT-2 on domain-specific text and serving generation through a production-ready FastAPI backend plus a static web frontend.
 
----
+## Overview
+
+This repository shows a full practical workflow:
+- Fine-tune `gpt2` on your own dataset (`data/domain_dataset.txt`)
+- Run an API for inference (`/generate`)
+- Use a simple responsive frontend (`app/static/*`)
+- Deploy quickly on Render (`render.yaml`)
+
+If `fine_tuned_model/` exists, the app loads it. If not, it gracefully falls back to base `gpt2` so the project still runs.
+
+## Features
+
+- FastAPI backend with clear API endpoints
+- Static frontend served by the backend
+- Health check endpoint for deployment monitoring
+- Fallback model behavior (fine-tuned model -> base GPT-2)
+- Training script using Hugging Face `Trainer`
+- Render deployment configuration included
 
 ## Project Structure
 
-```plaintext
-domain_text_generator/
-├── README.md
-├── requirements.txt
+```text
+.
+├── app/
+│   ├── app.py                 # FastAPI backend + static file serving
+│   └── static/
+│       ├── index.html         # Frontend UI
+│       ├── styles.css         # Frontend styling
+│       └── script.js          # Frontend API calls
 ├── data/
-│   └── domain_dataset.txt
+│   └── domain_dataset.txt     # Domain training text (one example per line)
 ├── scripts/
-│   └── fine_tune.py
-└── app/
-    └── app.py
+│   └── fine_tune.py           # GPT-2 fine-tuning script
+├── requirements.txt
+├── render.yaml
+└── README.md
 ```
 
-- **`data/domain_dataset.txt`**: Contains the domain-specific text data. Each line represents a training example.
-- **`scripts/fine_tune.py`**: Script to fine-tune GPT-2 using Hugging Face Transformers on the provided dataset.
-- **`app/app.py`**: Gradio-based interactive demo to generate text using the fine-tuned model.
-- **`requirements.txt`**: List of required Python libraries.
+## Local Setup
 
----
+1. **Clone and enter the project**
+   ```bash
+   git clone <your-repo-url>
+   cd Domain-Specific-Text-Generator-with-Fine-Tuned-Transformers
+   ```
 
-## Setup Instructions
+2. **Create and activate a virtual environment (recommended)**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate   # Linux/macOS
+   # .venv\Scripts\activate    # Windows PowerShell
+   ```
 
-1. **Clone the repository:**
+3. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-    ```bash
-    git clone https://github.com/yourusername/domain_text_generator.git
-    cd domain_text_generator
-    ```
+## Training Instructions
 
-2. **Install dependencies:**
-
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-3. **Prepare your dataset:**
-
-   Replace or update `data/domain_dataset.txt` with your domain-specific text data.  
-   Each line should be a separate text sample.
-
----
-
-## Fine-Tuning the Model
-
-Run the fine-tuning script:
+Fine-tune GPT-2 on your dataset:
 
 ```bash
-python scripts/fine_tune.py --data_file data/domain_dataset.txt --output_dir fine_tuned_model --epochs 3 --block_size 128
+python scripts/fine_tune.py \
+  --data_file data/domain_dataset.txt \
+  --output_dir fine_tuned_model \
+  --epochs 3 \
+  --block_size 128
 ```
 
-### Arguments
+After training, the model and tokenizer are saved to `fine_tuned_model/`.
 
-- **`--data_file`**: Path to your text dataset.
-- **`--output_dir`**: Directory where the fine-tuned model will be saved.
-- **`--epochs`**: Number of training epochs.
-- **`--block_size`**: Block size used for text chunking.
+## Run Locally
 
----
-
-## Model Evaluation
-
-After training, the script will evaluate the model and print the perplexity metric.
-
----
-
-## Running the Interactive Demo
-
-Launch the Gradio app:
+Start the FastAPI app:
 
 ```bash
-python app/app.py
+uvicorn app.app:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-This will start a local server and open a web interface where you can input a text prompt and generate text.
+Then open:
+- Frontend: `http://localhost:8000/`
+- API docs: `http://localhost:8000/docs`
 
----
+## API Usage
 
-## Project Dependencies
+### Health Check
 
-- Python 3.7+
-- Transformers
-- Datasets
-- Torch
-- Gradio
+```bash
+curl http://localhost:8000/health
+```
 
----
+Example response:
 
-## Fine-Tuning Details
+```json
+{
+  "status": "ok",
+  "model_source": "not_loaded",
+  "fallback_model": "gpt2"
+}
+```
 
-The fine-tuning process uses the Hugging Face Trainer API with the following steps:
+### Generate Text
 
-1. **Data Loading**: The dataset is loaded from a text file and split into training and validation sets.  
-2. **Tokenization**: The GPT-2 tokenizer tokenizes the text data.  
-3. **Text Chunking**: Tokenized texts are grouped into blocks of a specified size.  
-4. **Model Training**: The pre-trained GPT-2 model is fine-tuned on the processed dataset.  
-5. **Evaluation**: Model performance is evaluated using perplexity.
+```bash
+curl -X POST http://localhost:8000/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Write a concise technical note about transformer fine-tuning:",
+    "max_length": 100
+  }'
+```
 
----
+Example response:
 
-## License
+```json
+{
+  "prompt": "Write a concise technical note about transformer fine-tuning:",
+  "generated_text": "...",
+  "model_source": "gpt2"
+}
+```
 
-This project is open source under the [MIT License](https://opensource.org/licenses/MIT).
+## Frontend Usage
 
----
+1. Open `http://localhost:8000/`
+2. Enter a prompt
+3. Adjust max length
+4. Click **Generate**
+5. Read output in the generated text panel
+
+## Render Deployment
+
+This project includes `render.yaml` for easy deployment.
+
+### Option A: Blueprint Deploy (recommended)
+
+1. Push this repository to GitHub
+2. In Render, choose **New +** -> **Blueprint**
+3. Connect the repo and deploy
+
+Render uses:
+- `buildCommand`: `pip install -r requirements.txt`
+- `startCommand`: `uvicorn app.app:app --host 0.0.0.0 --port $PORT`
+
+### Option B: Manual Web Service
+
+If you create the service manually in Render dashboard:
+- **Environment**: Python
+- **Build Command**: `pip install -r requirements.txt`
+- **Start Command**: `uvicorn app.app:app --host 0.0.0.0 --port $PORT`
+- **Python Version**: 3.10+
+
+## Fallback Model Behavior
+
+At startup the backend checks for `fine_tuned_model/`:
+- Present -> loads your fine-tuned model
+- Missing -> loads base `gpt2`
+
+This ensures local development and deployment still work before training is complete.
+
+## Future Improvements
+
+- Add streaming token output for better UX
+- Add evaluation scripts and benchmark reports
+- Add request authentication/rate limiting for public API usage
+- Add automated tests for API endpoints
+- Add CI for linting and deployment checks
 
 ## Acknowledgements
 
 - [Hugging Face Transformers](https://github.com/huggingface/transformers)
-- [Gradio](https://github.com/gradio-app/gradio)
-```
+- [PyTorch](https://pytorch.org/)
+- [FastAPI](https://fastapi.tiangolo.com/)
+- [Render](https://render.com/)
